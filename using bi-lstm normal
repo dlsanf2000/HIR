@@ -1,0 +1,113 @@
+import pandas as pd
+import numpy as np
+%matplotlib inline
+import matplotlib.pyplot as plt
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.utils import to_categorical
+from google.colab import drive
+drive.mount('/content/drive/')
+
+import ast
+train_df = pd.read_csv('/content/drive/MyDrive/Colab Notebooks/sep_df_Train.csv') #Set Dir
+test_df = pd.read_csv('/content/drive/MyDrive/Colab Notebooks/sep_df_Test.csv') #Set Dir
+
+train_df['words'] = train_df['words'].apply(ast.literal_eval)
+train_df['tags'] = train_df['tags'].apply(ast.literal_eval)
+test_df['words'] = test_df['words'].apply(ast.literal_eval)
+test_df['tags'] = test_df['tags'].apply(ast.literal_eval)
+words = train_df.words
+tags = train_df.tags
+
+print(train_df.words[0])
+words[0]
+
+tags.iloc[:5]
+
+print(tags[98])
+
+src_tokenizer = Tokenizer(oov_token='OOV') # 모든 단어를 사용하지만 인덱스 1에는 단어 'OOV'를 할당한다.
+src_tokenizer.fit_on_texts(words)
+tar_tokenizer = Tokenizer(lower=False) # 태깅 정보들은 내부적으로 대문자를 유지한채로 저장
+tar_tokenizer.fit_on_texts(tags)
+
+vocab_size = len(src_tokenizer.word_index) + 1
+tag_size = len(tar_tokenizer.word_index) + 1
+print('단어 집합의 크기 : {}'.format(vocab_size))
+print('개체명 태깅 정보 집합의 크기 : {}'.format(tag_size))
+
+X_train = src_tokenizer.texts_to_sequences(words)
+y_train = tar_tokenizer.texts_to_sequences(tags)
+
+print(X_train[0])
+print(y_train[0])
+
+word_to_index = src_tokenizer.word_index
+index_to_word = src_tokenizer.index_word
+ner_to_index = tar_tokenizer.word_index
+index_to_ner = tar_tokenizer.index_word
+index_to_ner[0] = 'PAD'
+
+print(index_to_ner)
+
+decoded = []
+for index in X_train[0] : # 첫번째 샘플 안의 인덱스들에 대해서
+    decoded.append(index_to_word[index]) # 다시 단어로 변환
+
+print('기존의 문장 : {}'.format(words[0]))
+print('디코딩 문장 : {}'.format(decoded))
+
+max_len = 250
+# 모든 샘플들의 길이를 맞출 때 뒤의 공간에 숫자 0으로 채움.
+X_train = pad_sequences(X_train, padding='post', maxlen=max_len)
+y_train = pad_sequences(y_train, padding='post', maxlen=max_len)
+
+X_train, X_test, y_train, y_test = train_test_split(X_train, y_train, test_size=.2, random_state=777)
+
+y_train = to_categorical(y_train, num_classes=tag_size)
+y_test = to_categorical(y_test, num_classes=tag_size)
+
+print('훈련 샘플 문장의 크기 : {}'.format(X_train.shape))
+print('훈련 샘플 레이블의 크기 : {}'.format(y_train.shape))
+print('테스트 샘플 문장의 크기 : {}'.format(X_test.shape))
+print('테스트 샘플 레이블의 크기 : {}'.format(y_test.shape))
+
+pip install seqeval
+
+from seqeval.metrics import f1_score, classification_report
+
+from keras.models import Sequential
+from keras.layers import Dense, LSTM, InputLayer, Bidirectional, TimeDistributed, Embedding
+from keras.optimizers import Adam
+from keras.models import load_model
+
+model = Sequential()
+model.add(Embedding(vocab_size, 128, input_length=max_len, mask_zero=True))
+model.add(Bidirectional(LSTM(256, return_sequences=True)))
+model.add(TimeDistributed(Dense(tag_size, activation=('softmax'))))
+model.compile(loss='categorical_crossentropy', optimizer=Adam(0.001), metrics=['accuracy'])
+
+history = model.fit(X_train, y_train, batch_size=128, epochs=18,  validation_split=0.1)
+
+i=13 # 확인하고 싶은 테스트용 샘플의 인덱스.
+y_predicted = model.predict(np.array([X_test[i]])) # 입력한 테스트용 샘플에 대해서 예측 y를 리턴
+y_predicted = np.argmax(y_predicted, axis=-1) # 원-핫 인코딩을 다시 정수 인코딩으로 변경함.
+true = np.argmax(y_test[i], -1) # 원-핫 인코딩을 다시 정수 인코딩으로 변경함.
+
+print("{:15}|{:5}|{}".format("단어", "실제값", "예측값"))
+print(35 * "-")
+
+for w, t, pred in zip(X_test[i], true, y_predicted[0]):
+    if w != 0: # PAD값은 제외함.
+        print("{:17}: {:7} {}".format(index_to_word[w], index_to_ner[t], index_to_ner[pred]))
+
+
+f1score = F1score(use_char=False)
+
+y_predicted=model.predict([X_test])
+
+pred_tags = f1score.sequences_to_tags(y_predicted)
+test_tags = f1score.sequences_to_tags(y_test)
+
+print("f1-score : {:.1%}".format(f1_score(test_tags,pred_tags)))
